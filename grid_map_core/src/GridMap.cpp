@@ -40,6 +40,7 @@ GridMap::GridMap(const std::vector<std::string> & layers)
 
   for (auto & layer : layers_) {
     data_.insert(std::pair<std::string, Matrix>(layer, Matrix()));
+    defaults_.insert(std::pair<std::string, double>(layer, NAN));
   }
 }
 
@@ -73,6 +74,59 @@ void GridMap::setGeometry(const SubmapGeometry & geometry)
 void GridMap::setBasicLayers(const std::vector<std::string> & basicLayers)
 {
   basicLayers_ = basicLayers;
+}
+
+void GridMap::setConstant(const std::string& layer, const double value)
+{
+  try {
+    data_[layer].setConstant(value);
+    defaults_[layer] = value;
+  } catch (const std::out_of_range& exception) {
+    throw std::out_of_range("GridMap::get(...) : No map layer '" + layer + "' available.");
+  }
+}
+
+void GridMap::grow(const Length& length, const Direction direction)
+{
+  if (length(0) < length_(0) || length(1) < length_(1))
+  {
+    return;
+  }
+
+  Length delta(length(0) - length_(0), length(1) - length_(1));
+
+  Size size;
+  size(0) = static_cast<int>(round(length(0) / resolution_));
+  size(1) = static_cast<int>(round(length(1) / resolution_));
+  conservativeResize(size, direction);
+  length_ = length;
+
+  // Update position
+  switch (direction)
+  {
+    case CENTERED:
+      break;
+
+    case NE:
+      position_(0) += delta(0)/2;
+      position_(1) += delta(1)/2;
+      break;
+
+    case NW:
+      position_(0) -= delta(0)/2;
+      position_(1) += delta(1)/2;
+      break;
+
+    case SE:
+      position_(0) += delta(0)/2;
+      position_(1) -= delta(1)/2;
+      break;
+
+    default:
+      position_(0) -= delta(0)/2;
+      position_(1) -= delta(1)/2;
+      break;
+  }
 }
 
 const std::vector<std::string> & GridMap::getBasicLayers() const
@@ -111,6 +165,7 @@ void GridMap::add(const std::string & layer, const Matrix & data)
   } else {
     // Type does not exist yet, add type and data.
     data_.insert(std::pair<std::string, Matrix>(layer, data));
+    defaults_.insert(std::pair<std::string, double>(layer, NAN));
     layers_.push_back(layer);
   }
 }
@@ -959,6 +1014,63 @@ void GridMap::resize(const Index & size)
   }
 }
 
+void GridMap::conservativeResize(const Index& size, const Direction direction)
+{
+  int row_delta = size(0) - size_(0);
+  int col_delta = size(1) - size_(1);
+
+  Eigen::MatrixXf like = Eigen::MatrixXf::Constant(size(0), size(1), NAN);
+  for (auto& data : data_)
+  {
+    like.setConstant(defaults_[data.first]); //set new values equal to default
+    data.second.conservativeResizeLike(like);
+
+    // Swap rows and columns as needed
+    switch (direction)
+    {
+      case CENTERED:
+        for (int i = size_(0)-1; i >= 0; i--)
+        {
+          data.second.row(i).swap(data.second.row(i+row_delta/2));
+        }
+        for (int i = size_(1)-1; i >= 0; i--)
+        {
+          data.second.col(i).swap(data.second.col(i+col_delta/2));
+        }
+        break;
+
+      case NE:
+        for (int i = size_(0)-1; i >= 0; i--)
+        {
+          data.second.row(i).swap(data.second.row(i+row_delta));
+        }
+        for (int i = size_(1)-1; i >= 0; i--)
+        {
+          data.second.col(i).swap(data.second.col(i+col_delta));
+        }
+        break;
+
+      case NW:
+        for (int i = size_(1)-1; i >= 0; i--)
+        {
+          data.second.col(i).swap(data.second.col(i+col_delta));
+        }
+        break;
+
+      case SE:
+        for (int i = size_(0)-1; i >= 0; i--)
+        {
+          data.second.row(i).swap(data.second.row(i+row_delta));
+        }
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  size_ = size;
+}
 
 bool GridMap::atPositionBicubicConvolutionInterpolated(
   const std::string & layer, const Position & position,
